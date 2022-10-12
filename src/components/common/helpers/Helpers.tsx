@@ -177,7 +177,20 @@ export function getRandomColor(email: string): string {
 }
 
 export function showError(serverError, showToastOnUnknownError = true, hideAccessError = false) {
-    if (serverError instanceof ServerErrors && Array.isArray(serverError.errors)) {
+    if (serverError.code === 403 || serverError.code === 401) {
+        if(!hideAccessError){
+            toast.info(
+                <ToastBody
+                    title="Access denied"
+                    subtitle="You do not have required access to perform this action"
+                />,
+                {
+                    className: 'devtron-toast unauthorized',
+                },
+            )
+        }
+    }
+    else if (serverError instanceof ServerErrors && Array.isArray(serverError.errors)) {
         serverError.errors.map(({ userMessage, internalMessage }) => {
             toast.error(userMessage || internalMessage)
         })
@@ -187,17 +200,7 @@ export function showError(serverError, showToastOnUnknownError = true, hideAcces
         }
 
         if (showToastOnUnknownError) {
-            if (!hideAccessError && serverError.code === 403 || serverError.code === 401) {
-                toast.info(
-                    <ToastBody
-                        title="Access denied"
-                        subtitle="You do not have required access to perform this action"
-                    />,
-                    {
-                        className: 'devtron-toast unauthorized',
-                    },
-                )
-            } else if (serverError.message) {
+            if (serverError.message) {
                 toast.error(serverError.message)
             } else {
                 toast.error('Some Error Occurred')
