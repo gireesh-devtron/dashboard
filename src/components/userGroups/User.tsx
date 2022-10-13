@@ -208,10 +208,10 @@ export default function UserForm({
             var err_obj = new ServerError(err)
 
             if (err_obj.code == 400 ){
-                toast.error(err_obj.userMessage)
+                toast.error(err_obj.internalMessage || err_obj.userMessage)
             }
             else if (err_obj.code == 417){
-                toast.warn(err_obj.userMessage)
+                toast.warn(err_obj.internalMessage || err_obj.internalMessage)
             }
             else{
                 showError(err);
