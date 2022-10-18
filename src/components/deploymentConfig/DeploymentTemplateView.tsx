@@ -8,9 +8,12 @@ import {
     CHECKBOX_VALUE,
     ConditionalWrap,
     isVersionLessThanOrEqualToTarget,
+    not,
     Progressing,
+    RadioGroup,
     showError,
     sortObjectArrayAlphabetically,
+    Toggle,
     versionComparator,
 } from '../common'
 import { DropdownIndicator, Option } from '../v2/common/ReactSelect.utils'
@@ -21,6 +24,10 @@ import { ReactComponent as Close } from '../../assets/icons/ic-close.svg'
 import { ReactComponent as Edit } from '../../assets/icons/ic-pencil.svg'
 import { ReactComponent as Next } from '../../assets/icons/ic-arrow-right.svg'
 import { ReactComponent as Locked } from '../../assets/icons/ic-locked.svg'
+import { ReactComponent as Help } from '../../assets/icons/ic-help.svg'
+import { ReactComponent as InfoIcon } from '../../assets/icons/info-filled.svg'
+import { ReactComponent as Add } from '../../assets/icons/ic-add.svg'
+import { ReactComponent as AlertTriangle } from '../../assets/icons/ic-alert-triangle.svg'
 import { MarkDown } from '../charts/discoverChartDetail/DiscoverChartDetails'
 import CodeEditor from '../CodeEditor/CodeEditor'
 import { getDeploymentTemplate } from './service'
@@ -37,8 +44,12 @@ import {
     DeploymentTemplateEditorViewProps,
     DeploymentTemplateOptionsTabProps,
 } from './types'
-import { getCommonSelectStyles } from './constants'
+import { BASIC_FIELD_MAPPING, getCommonSelectStyles } from './constants'
 import { SortingOrder } from '../app/types'
+import InfoColourBar from '../common/infocolourBar/InfoColourbar'
+import { getBasicFieldValue, updateTemplateFromBasicValue, validateBasicView } from './DeploymentConfig.utils'
+import { applyPatch } from 'fast-json-patch'
+import { ValidationRules } from './validationRules'
 
 const renderReadMeOption = (openReadMe: boolean, handleReadMeClick: () => void, disabled?: boolean) => {
     const handleReadMeOptionClick = () => {
@@ -196,7 +207,11 @@ export const ChartTypeVersionOptions = ({
     }
 
     return (
-        <div className="chart-type-version-options">
+        <div
+            className={`chart-type-version-options pr-16 pt-8 pb-8 ${
+                disableVersionSelect || selectedChart?.name !== ROLLOUT_DEPLOYMENT ? '' : 'dc__border-right'
+            }`}
+        >
             <div className="chart-type-options">
                 <span className="fs-13 fw-4 cn-9">Chart type:</span>
                 {isUnSet ? (
@@ -332,33 +347,73 @@ export const DeploymentTemplateOptionsTab = ({
     selectChart,
     selectedChartRefId,
     disableVersionSelect,
+    yamlMode,
+    isBasicViewLocked,
+    codeEditorValue,
+    basicFieldValuesErrorObj,
+    changeEditorMode,
 }: DeploymentTemplateOptionsTabProps) => {
     return (
-        <div className="dt-options-tab-container flex dc__content-space pl-16 pr-16 pt-8 pb-8">
+        <div className="dt-options-tab-container flex dc__content-space pl-16 pr-16">
             {!openComparison && !openReadMe ? (
-                <ChartTypeVersionOptions
-                    isUnSet={isUnSet}
-                    charts={charts}
-                    selectedChart={selectedChart}
-                    selectChart={selectChart}
-                    selectedChartRefId={selectedChartRefId}
-                    disableVersionSelect={disableVersionSelect}
-                />
+                <div className="flex">
+                    <ChartTypeVersionOptions
+                        isUnSet={isUnSet}
+                        charts={charts}
+                        selectedChart={selectedChart}
+                        selectChart={selectChart}
+                        selectedChartRefId={selectedChartRefId}
+                        disableVersionSelect={disableVersionSelect}
+                    />
+                    {selectedChart?.name === ROLLOUT_DEPLOYMENT &&
+                        !disableVersionSelect &&
+                        !chartConfigLoading &&
+                        codeEditorValue && (
+                            <RadioGroup
+                                className="gui-yaml-switch pl-16"
+                                name="yaml-mode"
+                                initialTab={yamlMode ? 'yaml' : 'gui'}
+                                disabled={isBasicViewLocked}
+                                onChange={changeEditorMode}
+                            >
+                                <RadioGroup.Radio
+                                    value="gui"
+                                    isDisabled={isBasicViewLocked}
+                                    showTippy={isBasicViewLocked}
+                                    tippyContent={
+                                        <div className="dc__mxw-200">
+                                            <span className="dc__block fw-6">Basic view is locked</span>
+                                            <span className="fw-4">
+                                                Some advanced configurations have been modified. Please continue editing
+                                                in Advanced(YAML) view.
+                                            </span>
+                                        </div>
+                                    }
+                                >
+                                    {isBasicViewLocked && <Locked className="icon-dim-12 mr-6" />}
+                                    Basic
+                                </RadioGroup.Radio>
+                                <RadioGroup.Radio value="yaml">Advanced (YAML)</RadioGroup.Radio>
+                            </RadioGroup>
+                        )}
+                </div>
             ) : (
                 <span className="flex fs-13 fw-6 cn-9 h-32">
                     {openComparison ? 'Comparing deployment template' : 'Showing README.md'}
                 </span>
             )}
-            <CompareOptions
-                isComparisonAvailable={isComparisonAvailable}
-                isEnvOverride={isEnvOverride}
-                openComparison={openComparison}
-                handleComparisonClick={handleComparisonClick}
-                chartConfigLoading={chartConfigLoading}
-                openReadMe={openReadMe}
-                isReadMeAvailable={isReadMeAvailable}
-                handleReadMeClick={handleReadMeClick}
-            />
+            {yamlMode && (
+                <CompareOptions
+                    isComparisonAvailable={isComparisonAvailable}
+                    isEnvOverride={isEnvOverride}
+                    openComparison={openComparison}
+                    handleComparisonClick={handleComparisonClick}
+                    chartConfigLoading={chartConfigLoading}
+                    openReadMe={openReadMe}
+                    isReadMeAvailable={isReadMeAvailable}
+                    handleReadMeClick={handleReadMeClick}
+                />
+            )}
         </div>
     )
 }
@@ -569,12 +624,21 @@ export const DeploymentTemplateEditorView = ({
     setFetchedValues,
     readOnly,
     globalChartRefId,
+    yamlMode,
+    basicFieldValues,
+    setBasicFieldValues,
+    basicFieldPatchData,
+    setBasicFieldPatchData,
+    basicFieldValuesErrorObj,
+    setBasicFieldValuesErrorObj,
+    changeEditorMode,
 }: DeploymentTemplateEditorViewProps) => {
     const [fetchingValues, setFetchingValues] = useState(false)
     const [selectedOption, setSelectedOption] = useState<DeploymentChartOptionType>()
     const [filteredEnvironments, setFilteredEnvironments] = useState<DeploymentChartOptionType[]>([])
     const [globalChartRef, setGlobalChartRef] = useState(null)
-
+    const [httpRequestRoute, setHttpRequestRoute] = useState(false)
+    const validationRules = new ValidationRules()
     useEffect(() => {
         if (selectedChart && environments.length > 0) {
             let _filteredEnvironments = environments.sort((a, b) => a.environmentName.localeCompare(b.environmentName))
@@ -635,7 +699,161 @@ export const DeploymentTemplateEditorView = ({
         }
     }, [openComparison])
 
-    return (
+    const renderActionButton = () => {
+        return (
+            <span className="cb-5 cursor fw-6" onClick={changeEditorMode}>
+                Switch to Advanced
+            </span>
+        )
+    }
+
+    const handleScanToggle = (): void => {
+        setHttpRequestRoute(not)
+    }
+
+    const renderLabel = (title: string, description: string, isMandatory?: boolean): JSX.Element => {
+        return (
+            <label className="cn-7 mb-0 lh-32">
+                <Tippy
+                    className="default-tt"
+                    arrow={false}
+                    content={<span className="dc__mxw-200 dc__block fw-4">{description}</span>}
+                    interactive={true}
+                >
+                    <span className="text-underline-dashed">
+                        {title}
+                        {isMandatory && <span className="cr-5"> *</span>}
+                    </span>
+                </Tippy>
+            </label>
+        )
+    }
+
+    const handleInputChange = (e) => {
+        const _basicFieldValues = { ...basicFieldValues }
+        const _basicFieldPatchData = { ...basicFieldPatchData }
+        if (e.target.name === 'port') {
+            e.target.value = e.target.value.replace(/\D/g, '')
+            _basicFieldValues['port'] = e.target.value && Number(e.target.value)
+            if (validationRules.port(e.target.value).isValid) {
+                _basicFieldPatchData['port'] = {
+                    op: 'replace',
+                    path: BASIC_FIELD_MAPPING['port'],
+                    value: Number(e.target.value),
+                }
+            }
+        } else if (e.target.name === 'host') {
+            _basicFieldValues['host'] = e.target.value
+            _basicFieldValues['hosts'] = [_basicFieldValues['hosts'][0]]
+            _basicFieldValues['hosts'][0]['host'] = e.target.value
+            _basicFieldPatchData['hosts'] = {
+                op: 'replace',
+                path: BASIC_FIELD_MAPPING['hosts'],
+                value: _basicFieldValues['hosts'],
+            }
+        } else if (e.target.name === 'paths') {
+            _basicFieldValues['paths'][e.target.dataset.index] = e.target.value
+            _basicFieldValues['hosts'] = [_basicFieldValues['hosts'][0]]
+            _basicFieldValues['hosts'][0]['paths'] = _basicFieldValues['paths']
+            _basicFieldPatchData['hosts'] = {
+                op: 'replace',
+                path: BASIC_FIELD_MAPPING['hosts'],
+                value: _basicFieldValues['hosts'],
+            }
+        } else if (e.target.name === 'resources_cpu' || e.target.name === 'resources_memory') {
+            const resource = _basicFieldValues['resources']
+            if (e.target.name === 'resources_cpu') {
+                resource['limits']['cpu'] = e.target.value
+                resource['requests']['cpu'] = e.target.value
+            } else {
+                resource['limits']['memory'] = e.target.value
+                resource['requests']['memory'] = e.target.value
+            }
+            _basicFieldValues['resources'] = resource
+            _basicFieldPatchData['resources'] = {
+                op: 'replace',
+                path: BASIC_FIELD_MAPPING['resources'],
+                value: resource,
+            }
+        } else if (e.target.name.indexOf('envVariables_') >= 0) {
+            const envVariable = _basicFieldValues['envVariables'][e.target.dataset.index]
+            if (e.target.name.indexOf('key') >= 0) {
+                envVariable['key'] = e.target.value
+            } else {
+                envVariable['value'] = e.target.value
+            }
+            _basicFieldValues['envVariables'][e.target.dataset.index] = envVariable
+            if (validationRules.envVariable(envVariable).isValid && envVariable.key && envVariable.value) {
+                _basicFieldPatchData['envVariables'] = {
+                    op: 'replace',
+                    path: BASIC_FIELD_MAPPING['envVariables'],
+                    value: _basicFieldValues['envVariables'],
+                }
+            }
+        }
+        setBasicFieldValues(_basicFieldValues)
+        setBasicFieldPatchData(_basicFieldPatchData)
+        setBasicFieldValuesErrorObj(validateBasicView(_basicFieldValues))
+    }
+
+    const addRow = (e): void => {
+        const _basicFieldValues = { ...basicFieldValues }
+        const _basicFieldPatchData = { ...basicFieldPatchData }
+        if (e.target.dataset.name === 'paths') {
+            _basicFieldValues['paths'].unshift('')
+            _basicFieldValues['hosts'][0]['paths'] = _basicFieldValues['paths']
+            _basicFieldPatchData['hosts'] = {
+                op: 'replace',
+                path: BASIC_FIELD_MAPPING['hosts'],
+                value: _basicFieldValues['hosts'],
+            }
+        } else {
+            _basicFieldValues['envVariables'].unshift({ key: '', value: '' })
+            _basicFieldPatchData['hosts'] = {
+                op: 'replace',
+                path: BASIC_FIELD_MAPPING['envVariables'],
+                value: _basicFieldValues['envVariables'],
+            }
+        }
+        setBasicFieldValues(_basicFieldValues)
+        setBasicFieldPatchData(_basicFieldPatchData)
+        if (e.target.dataset.name === 'envVariables') {
+            const _basicFieldValuesErrorObj = { ...basicFieldValuesErrorObj }
+            _basicFieldValuesErrorObj.envVariables.unshift({ isValid: true, message: null })
+            setBasicFieldValuesErrorObj(_basicFieldValuesErrorObj)
+        }
+    }
+
+    const removeRow = (name: string, index: number): void => {
+        const _basicFieldValues = { ...basicFieldValues }
+        const _basicFieldPatchData = { ...basicFieldPatchData }
+        if (_basicFieldValues[name].length === 1) {
+            _basicFieldValues[name].length = 0
+        } else {
+            _basicFieldValues[name].splice(index, 1)
+        }
+        if (name === 'paths') {
+            _basicFieldValues['hosts'][0]['paths'] = _basicFieldValues['paths']
+            _basicFieldPatchData['hosts'] = {
+                op: 'replace',
+                path: BASIC_FIELD_MAPPING['hosts'],
+                value: _basicFieldValues['hosts'],
+            }
+        } else {
+            _basicFieldPatchData['hosts'] = {
+                op: 'replace',
+                path: BASIC_FIELD_MAPPING['envVariables'],
+                value: _basicFieldValues['envVariables'],
+            }
+        }
+        setBasicFieldValues(_basicFieldValues)
+        setBasicFieldPatchData(_basicFieldPatchData)
+        if (name === 'envVariables') {
+            setBasicFieldValuesErrorObj(validateBasicView(_basicFieldValues))
+        }
+    }
+
+    return yamlMode ? (
         <>
             {showReadme && (
                 <div className="dt-readme dc__border-right">
@@ -691,6 +909,178 @@ export const DeploymentTemplateEditorView = ({
                 </CodeEditor>
             </div>
         </>
+    ) : (
+        <div className="form__row form__row--code-editor-container dc__border-top dc__border-bottom p-20 scrollable">
+            <InfoColourBar
+                message="Basic has limited configurations. Changes made here will be updated in Advanced (YAML)."
+                classname="info_bar mr-36 w-650-px"
+                Icon={InfoIcon}
+                iconClass="icon-dim-20"
+            />
+            <div className="pt-20 pb-20 w-650-px">
+                <div className="fw-6 fs-14 cn-9 mb-12">Container Port</div>
+                <div className="row-container mb-16">
+                    {renderLabel('Port', 'Port for the container', true)}
+                    <div>
+                        <input
+                            type="text"
+                            name="port"
+                            value={basicFieldValues?.['port']}
+                            className="w-200 br-4 en-2 bw-1 pl-10 pr-10 pt-5 pb-5"
+                            onChange={handleInputChange}
+                        />
+                        {basicFieldValuesErrorObj?.port && !basicFieldValuesErrorObj.port.isValid && (
+                            <span className="flexbox cr-5 mt-4 fw-5 fs-11 flexbox">
+                                <AlertTriangle className="icon-dim-14 mr-5 mt-2" />
+                                <span>{basicFieldValuesErrorObj.port.message}</span>
+                            </span>
+                        )}
+                    </div>
+                </div>
+                <div className={`row-container ${httpRequestRoute ? ' mb-8' : ' mb-16'}`}>
+                    <label className="fw-6 fs-14 cn-9 mb-8">HTTP Requests Routes</label>
+                    <div className="mt-4" style={{ width: '32px', height: '20px' }}>
+                        <Toggle selected={httpRequestRoute} onSelect={handleScanToggle} />
+                    </div>
+                </div>
+                {httpRequestRoute && (
+                    <div className="mb-12">
+                        <div className="row-container mb-12">
+                            {renderLabel('Host', 'Host name')}
+                            <input
+                                type="text"
+                                name="host"
+                                value={basicFieldValues?.['host']}
+                                className="w-100 br-4 en-2 bw-1 pl-10 pr-10 pt-5 pb-5"
+                                onChange={handleInputChange}
+                            />
+                        </div>
+                        <div className="row-container mb-4">
+                            {renderLabel('Path', 'Path where this component will listen for HTTP requests')}
+                            <div
+                                className="pointer cb-5 fw-6 fs-13 flexbox lh-32 w-120-px"
+                                data-name="paths"
+                                onClick={addRow}
+                            >
+                                <Add className="icon-dim-20 fcb-5 mt-6 mr-6" />
+                                Add path
+                            </div>
+                        </div>
+                        {basicFieldValues?.['paths']?.map((path: string, index: number) => (
+                            <div className="row-container mb-4" key={`path-${index}`}>
+                                <div />
+                                <input
+                                    type="text"
+                                    name="paths"
+                                    data-index={index}
+                                    value={path}
+                                    className="w-100 br-4 en-2 bw-1 pl-10 pr-10 pt-5 pb-5"
+                                    onChange={handleInputChange}
+                                />
+                                <Close
+                                    className="option-close-icon icon-dim-16 mt-8 mr-8 pointer"
+                                    onClick={(e) => removeRow('paths', index)}
+                                />
+                            </div>
+                        ))}
+                    </div>
+                )}
+                <div className="fw-6 fs-14 cn-9 mb-8">Resources (CPU & RAM)</div>
+                <div className="row-container mb-8">
+                    {renderLabel('CPU', 'CPU available to the application', true)}
+                    <div>
+                        <input
+                            type="text"
+                            name="resources_cpu"
+                            value={basicFieldValues?.['resources']['limits']['cpu']}
+                            className="w-200 br-4 en-2 bw-1 pl-10 pr-10 pt-5 pb-5"
+                            onChange={handleInputChange}
+                        />
+                        {basicFieldValuesErrorObj?.cpu && !basicFieldValuesErrorObj.cpu.isValid && (
+                            <span className="flexbox cr-5 fw-5 fs-11 flexbox">
+                                <AlertTriangle className="icon-dim-14 mr-5 mt-2" />
+                                <span>{basicFieldValuesErrorObj.cpu.message}</span>
+                            </span>
+                        )}
+                    </div>
+                </div>
+                <div className="row-container mb-16">
+                    {renderLabel('Memory', 'Memory available to the application', true)}
+                    <div>
+                        <input
+                            type="text"
+                            name="resources_memory"
+                            value={basicFieldValues?.['resources']['limits']['memory']}
+                            className="w-200 br-4 en-2 bw-1 pl-10 pr-10 pt-5 pb-5"
+                            onChange={handleInputChange}
+                        />
+                        {basicFieldValuesErrorObj?.memory && !basicFieldValuesErrorObj.memory.isValid && (
+                            <span className="flexbox cr-5 fw-5 fs-11 flexbox">
+                                <AlertTriangle className="icon-dim-14 mr-5 mt-2" />
+                                <span>{basicFieldValuesErrorObj.memory.message}</span>
+                            </span>
+                        )}
+                    </div>
+                </div>
+                <div className="fw-6 fs-14 cn-9 mb-8">Environment Variables</div>
+                <div className="row-container mb-4">
+                    {renderLabel(
+                        'Key/Value',
+                        'Set environment variables as key:value for containers that run in the Pod.',
+                    )}
+                    <div
+                        className="pointer cb-5 fw-6 fs-13 flexbox lh-32 w-120-px"
+                        data-name="envVariables"
+                        onClick={addRow}
+                    >
+                        <Add className="icon-dim-20 fcb-5 mt-6 mr-6" />
+                        Add variable
+                    </div>
+                </div>
+                {basicFieldValues?.['envVariables']?.map((envVariable: string, index: number) => (
+                    <div className="row-container mb-4" key={`envVariables-${index}`}>
+                        <div />
+                        <div>
+                            <input
+                                type="text"
+                                name={`envVariables_key-${index}`}
+                                data-index={index}
+                                value={envVariable['key']}
+                                className="w-100 br-4 en-2 bw-1 pl-10 pr-10 pt-5 pb-5 dc__no-bottom-radius"
+                                onChange={handleInputChange}
+                            />
+                            <textarea
+                                name={`envVariables_value-${index}`}
+                                data-index={index}
+                                value={envVariable['value']}
+                                className="w-100 br-4 en-2 bw-1 pl-10 pr-10 pt-5 pb-5 dc__no-top-radius dc__no-top-border"
+                                onChange={handleInputChange}
+                                rows={2}
+                            ></textarea>
+
+                            {basicFieldValuesErrorObj?.envVariables[index] &&
+                                !basicFieldValuesErrorObj.envVariables[index].isValid && (
+                                    <span className="flexbox cr-5 fw-5 fs-11 flexbox">
+                                        <AlertTriangle className="icon-dim-14 mr-5 mt-2" />
+                                        <span>{basicFieldValuesErrorObj.envVariables[index].message}</span>
+                                    </span>
+                                )}
+                        </div>
+                        <Close
+                            className="option-close-icon icon-dim-16 mt-8 mr-8 pointer"
+                            onClick={(e) => removeRow('envVariables', index)}
+                        />
+                    </div>
+                ))}
+            </div>
+            <InfoColourBar
+                message="To modify additional configurations"
+                classname="dc__content-start bw-1 bcv-1 ev-2 bcv-1 w-100  switch-to-advance-info-bar "
+                Icon={Help}
+                iconClass="fcv-5 icon-dim-20"
+                renderActionButton={renderActionButton}
+            />
+        </div>
     )
 }
 

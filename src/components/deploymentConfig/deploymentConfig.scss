@@ -111,10 +111,10 @@
                     background: var(--B500);
                     color: var(--white);
                     border: 1px solid transparent;
-        
+
                     .loader .loader__svg {
                         path {
-                            fill: white
+                            fill: white;
                         }
                     }
                 }
@@ -210,6 +210,18 @@
     grid-template-rows: 32px 1fr;
     overflow: hidden;
     grid-area: editor;
+    &.scrollable {
+        overflow: hidden scroll;
+    }
+    .w-650-px {
+        width: 650px;
+    }
+
+    .row-container {
+        display: grid;
+        grid-template-columns: 220px auto 20px;
+        column-gap: 8px;
+    }
 
     &.form__row {
         margin-bottom: 0;
@@ -223,6 +235,14 @@
         .code-editor__information-info-icon path:nth-child(2) {
             fill: var(--Y700);
         }
+    }
+
+    .switch-to-advance-info-bar {
+        position: fixed;
+        bottom: 76px;
+        left: 303px;
+        padding: 6px 16px;
+        border-radius: 0;
     }
 }
 
